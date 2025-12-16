@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Boring Class Detector</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            --neon-green: #0f0;
+            --neon-red: #ff003c;
+            --bg-color: #050505;
+            --panel-bg: #111;
+        }
+
+        body {
+            font-family: 'Orbitron', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--neon-green);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            overflow: hidden;
+            background-image: radial-gradient(#1a1a1a 1px, transparent 1px);
+            background-size: 30px 30px; /* Dot pattern background */
+        }
+
+        h1 {
+            margin: 15px;
+            text-shadow: 0 0 10px var(--neon-green);
+            letter-spacing: 2px;
+        }
+
+        .main-layout {
+            display: flex;
+            gap: 30px;
+            margin-top: 20px;
+        }
+
+        /* --- VIDEO FEED --- */
+        .video-container {
+            position: relative;
+            width: 640px;
+            height: 480px;
+            border: 2px solid var(--neon-green);
+            box-shadow: 0 0 20px rgba(0, 255, 0, 0.2);
+            border-radius: 10px;
+            background: #000;
+            overflow: hidden;
+        }
+        
+        .video-container.critical {
+            border-color: var(--neon-red);
+            box-shadow: 0 0 30px rgba(255, 0, 60, 0.5);
+            animation: pulse-border 1s infinite;
+        }
+
+        @keyframes pulse-border {
+            0% { box-shadow: 0 0 10px var(--neon-red); }
+            50% { box-shadow: 0 0 30px var(--neon-red); }
+            100% { box-shadow: 0 0 10px var(--neon-red); }
+        }
+
+        video, canvas {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            transform: scaleX(-1);
+        }
+
+        /* --- CONTROL PANEL --- */
+        .panel {
+            width: 320px;
+            background: var(--panel-bg);
+            padding: 25px;
+            border-radius: 15px;
+            border: 1px solid #333;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        /* LCD Screen */
+        .lcd-screen {
+            background: #0a0a0a;
+            color: var(--neon-green);
+            border: 2px solid #333;
+            padding: 20px;
+            text-align: center;
+            font-size: 1.2rem;
+            border-radius: 8px;
+            min-height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            box-shadow: inset 0 0 10px rgba(0,0,0,0.8);
+        }
+        
+        .lcd-screen.alert {
+            color: var(--neon-red);
+            border-color: var(--neon-red);
+            text-shadow: 0 0 5px var(--neon-red);
+        }
+
+        /* Boredom Meter (Progress Bar) */
+        .meter-label { font-size: 0.9rem; margin-bottom: 5px; display: block; }
+        .meter-bg {
+            height: 20px;
+            background: #333;
+            border-radius: 10px;
+            overflow: hidden;
+            border: 1px solid #555;
+        }
+        .meter-fill {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, var(--neon-green), yellow);
+            transition: width 0.3s, background 0.3s;
+        }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            text-align: center;
+        }
+        .stat-box {
+            background: #222;
+            padding: 10px;
+            border-radius: 8px;
+        }
+        .stat-val { font-size: 1.5rem; font-weight: bold; }
+        .stat-lbl { font-size: 0.8rem; opacity: 0.7; }
+
+        /* Buttons */
+        .btn {
+            background: transparent;
+            border: 2px solid var(--neon-green);
+            color: var(--neon-green);
+            padding: 12px;
+            font-family: 'Orbitron', sans-serif;
+            cursor: pointer;
+            font-weight: bold;
+            transition: 0.2s;
+            text-transform: uppercase;
+        }
+        .btn:hover {
+            background: var(--neon-green);
+            color: black;
+            box-shadow: 0 0 15px var(--neon-green);
+        }
+
+        /* Overlay text on canvas */
+        .overlay-text {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            background: rgba(0,0,0,0.5);
+            padding: 5px;
+        }
+
+    </style>
+</head>
+<body>
+
+    <h1>SCANNING CLASSROOM...</h1>
+
+    <div class="main-layout">
+        <div class="video-container" id="video-wrapper">
+            <video id="input_video"></video>
+            <canvas id="output_canvas"></canvas>
+            <div style="position:absolute; top:20px; left:20px; width:20px; height:20px; border-top:2px solid var(--neon-green); border-left:2px solid var(--neon-green);"></div>
+            <div style="position:absolute; bottom:20px; right:20px; width:20px; height:20px; border-bottom:2px solid var(--neon-green); border-right:2px solid var(--neon-green);"></div>
+        </div>
+
+        <div class="panel">
+            <div id="lcd" class="lcd-screen">
+                SYSTEM STANDBY<br><span style="font-size:0.8rem">Initialize Camera</span>
+            </div>
+
+            <div>
+                <span class="meter-label">BOREDOM LEVEL</span>
+                <div class="meter-bg">
+                    <div id="bored-meter" class="meter-fill"></div>
+                </div>
+            </div>
+
+            <div class="stats-grid">
+                <div class="stat-box">
+                    <div id="face-count" class="stat-val">0</div>
+                    <div class="stat-lbl">STUDENTS</div>
+                </div>
+                <div class="stat-box">
+                    <div id="bored-count" class="stat-val">0</div>
+                    <div class="stat-lbl">ASLEEP/BORED</div>
+                </div>
+            </div>
+
+            <button class="btn" id="start-btn" onclick="startSystem()">[ INITIALIZE ]</button>
+            <button class="btn" onclick="toggleSimulate()" style="font-size:0.8rem; border-color:#555; color:#777">Simulate Alert (Demo)</button>
+        </div>
+    </div>
+
+<script>
+    // CONFIG
+    const MAR_THRESH = 0.5; 
+    const EAR_THRESH = 0.25;
+    const BOREDOM_TRIGGER = 0.4; // 40%
+
+    const videoEl = document.getElementById('input_video');
+    const canvasEl = document.getElementById('output_canvas');
+    const ctx = canvasEl.getContext('2d');
+    const lcd = document.getElementById('lcd');
+    const meter = document.getElementById('bored-meter');
+    const videoWrapper = document.getElementById('video-wrapper');
+    const faceCountEl = document.getElementById('face-count');
+    const boredCountEl = document.getElementById('bored-count');
+    const startBtn = document.getElementById('start-btn');
+
+    let audioCtx, oscillator, isAlarming = false;
+
+    // --- AUDIO (Alarm Sound) ---
+    function initAudio() {
+        if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    
+    function playAlarm(active) {
+        if(active && !isAlarming) {
+            isAlarming = true;
+            oscillator = audioCtx.createOscillator();
+            oscillator.type = 'square'; // 'Square' wave sounds more like an 8-bit alarm
+            oscillator.frequency.setValueAtTime(500, audioCtx.currentTime);
+            
+            // Siren Effect (Up and Down)
+            oscillator.frequency.linearRampToValueAtTime(800, audioCtx.currentTime + 0.5);
+            oscillator.frequency.linearRampToValueAtTime(500, audioCtx.currentTime + 1.0);
+
+            const gain = audioCtx.createGain();
+            gain.gain.value = 0.05; // Low volume
+            
+            oscillator.connect(gain);
+            gain.connect(audioCtx.destination);
+            oscillator.start();
+            
+            // Loop the frequency ramp manually if needed, but for simple demo:
+            oscillator.stop(audioCtx.currentTime + 1.5); 
+            setTimeout(() => { isAlarming = false; if(shouldBeAlarming) playAlarm(true); }, 1500);
+
+        } else if(!active) {
+            shouldBeAlarming = false; // Stop the loop
+        }
+    }
+    let shouldBeAlarming = false;
+
+    // --- MATH ---
+    function dist(p1, p2) {
+        return Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
+    }
+
+    // --- LOGIC ---
+    function onResults(results) {
+        ctx.save();
+        ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+        ctx.drawImage(results.image, 0, 0, canvasEl.width, canvasEl.height);
+
+        let faces = results.multiFaceLandmarks ? results.multiFaceLandmarks.length : 0;
+        let bored = 0;
+
+        if (results.multiFaceLandmarks) {
+            for (const landmarks of results.multiFaceLandmarks) {
+                // EAR (Eyes)
+                const eyeV = dist(landmarks[159], landmarks[145]);
+                const eyeH = dist(landmarks[33], landmarks[133]);
+                const ear = eyeV / eyeH;
+
+                // MAR (Mouth)
+                const mouthV = dist(landmarks[13], landmarks[14]);
+                const mouthH = dist(landmarks[61], landmarks[291]);
+                const mar = mouthV / mouthH;
+
+                let isBoredFace = (mar > MAR_THRESH || ear < EAR_THRESH);
+                if (isBoredFace) bored++;
+
+                // Draw Eye/Mouth Boxes
+                const x = landmarks[1].x * canvasEl.width;
+                const y = landmarks[1].y * canvasEl.height;
+                ctx.strokeStyle = isBoredFace ? "#ff003c" : "#0f0";
+                ctx.lineWidth = 2;
+                ctx.strokeRect(x - 30, y - 50, 60, 100); // Simple face box
+            }
+        }
+
+        // Update Stats
+        faceCountEl.innerText = faces;
+        boredCountEl.innerText = bored;
+        
+        // Update Meter
+        let percentage = faces > 0 ? (bored / faces) : 0;
+        meter.style.width = (percentage * 100) + "%";
+        
+        // Color Shift Meter
+        if(percentage > BOREDOM_TRIGGER) {
+            meter.style.background = "var(--neon-red)";
+            videoWrapper.classList.add("critical");
+            lcd.innerHTML = "⚠️ WARNING ⚠️<br>BOREDOM CRITICAL";
+            lcd.classList.add("alert");
+            shouldBeAlarming = true;
+            playAlarm(true);
+        } else {
+            meter.style.background = "var(--neon-green)";
+            videoWrapper.classList.remove("critical");
+            lcd.innerHTML = "STATUS: ACTIVE<br>Monitoring...";
+            lcd.classList.remove("alert");
+            shouldBeAlarming = false;
+        }
+
+        ctx.restore();
+    }
+
+    // --- SETUP ---
+    const faceMesh = new FaceMesh({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`});
+    faceMesh.setOptions({ maxNumFaces: 5, refineLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+    faceMesh.onResults(onResults);
+
+    function startSystem() {
+        initAudio();
+        startBtn.style.display = 'none';
+        lcd.innerHTML = "BOOTING UP...";
+        const camera = new Camera(videoEl, {
+            onFrame: async () => { await faceMesh.send({image: videoEl}); },
+            width: 640, height: 480
+        });
+        camera.start();
+    }
+
+    // --- DEMO FEATURE ---
+    function toggleSimulate() {
+        // Manually trigger visual alert for 3 seconds (good for presentations)
+        videoWrapper.classList.add("critical");
+        lcd.classList.add("alert");
+        lcd.innerHTML = "DEMO ALERT!<br>(Simulation)";
+        meter.style.width = "100%";
+        meter.style.background = "var(--neon-red)";
+        setTimeout(() => {
+            videoWrapper.classList.remove("critical");
+            lcd.classList.remove("alert");
+            meter.style.width = "0%";
+        }, 3000);
+    }
+</script>
+</body>
+</html>
